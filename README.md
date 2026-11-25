@@ -8,7 +8,7 @@
 
 准备 Python 3（批量转换模块需要 Python 3.10 或更高版本）。建库、检索和单份 Word 转换只用 Python 标准库。安装 Git 可启用检查点和撤销；用 Codex 打开生成的目录即可按项目规则维护知识页。
 
-1. 下载并解压 [v3.2 发布包](https://github.com/linkenlong/llm-wiki-kb/releases/tag/v3.2)，或克隆本仓库。在包含 `setup_kb.py` 的目录打开终端。
+1. 下载并解压 [v3.2 发布包](https://github.com/linkenlong/llm-wiki-kb/releases/tag/v3.2)，或下载当前分支的源码以使用新版搜索。在包含 `setup_kb.py` 的目录打开终端。
 2. 执行下列命令。示例把新库建在工具目录旁边，以便单独管理资料和 Git 历史。
 
    ```shell
@@ -46,6 +46,17 @@ python kb_tools.py lint
 ```
 
 `search` 在页面的标题、摘要、标签和正文中检索。`recent` 查看最近操作。`index` 根据页面摘要重建目录。`lint` 可发现失效的页面链接、来源页引用不到的原件和索引不同步等问题。对内容含义或结论的疑问，仍需查回原文。
+
+### 用日常问法搜索（v3.2 之后的源码版本）
+
+```shell
+python kb_tools.py search "急会诊多久要到场"
+python kb_tools.py search 首页质控 --type concept --limit 5
+```
+
+搜索会优先显示含完整查询词的页面，再用“多久”“怎么”“哪些”等问句线索拆出片段，也会识别问句中完整出现的中文页名和已登记的中文别名。结果会标明命中位置和问句片段。已有页面可直接参与搜索。
+
+如果读者常用简称，可以在对应知识页的 YAML 页头添加一行，例如在“病案首页质量控制”页中写 `aliases: [首页质控, 病案首页质控]`。别名只用于该页匹配。检索范围是 Wiki 正文和页面信息；未登记的同义表达可能漏检，可换关键词重试。
 
 ## 把 Word、PDF 和其他资料转成 Markdown
 

@@ -131,6 +131,7 @@ FILES["wiki/SCHEMA.md"] = """\
 ```yaml
 ---
 title: 页面标题
+# aliases: [常用简称, 其他名称]  # 可选，供 search 使用
 type: source | concept | entity | comparison | query
 summary: 一句话说明（不超过 80 字），会自动显示在 index 中
 created: YYYY-MM-DD
