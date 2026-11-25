@@ -282,10 +282,39 @@ def cmd_index(root):
 
 # ---------- search ----------
 
+# 保留原查询参与精确匹配；仅用问句片段补充召回。
+QUESTION_BREAK = re.compile(
+    r"请问|请帮我查一下|如何|怎么|怎样|多久|何时|什么时候|哪些|什么|哪里|哪儿|"
+    r"是否|需要|应该|由谁|多少|能否|可以|\s+|[？?！!，,。；;、：:]"
+)
+GENERIC_PARTS = {"时间", "记录", "流程", "要求", "规定", "内容", "操作", "一下", "一次"}
+
+
+def question_parts(query):
+    parts = QUESTION_BREAK.split(query)
+    if len(parts) == 1:
+        return set()
+    return {part.strip() for part in parts if len(part.strip()) >= 2 and part.strip() not in GENERIC_PARTS}
+
+
+def search_counts(term, fields, aliases):
+    counts = {}
+    for field, value in fields.items():
+        count = value.count(term)
+        if count:
+            counts[field] = count
+    if term in aliases:
+        counts["别名"] = 1
+    return counts
+
+
 def cmd_search(root, words, type_, tag, limit):
     wiki = need_wiki(root)
     pages, _, _ = collect(wiki)
-    weights = {"文件名": 5, "标题": 5, "标签": 4, "摘要": 3, "正文": 1}
+    weights = {"文件名": 5, "标题": 5, "别名": 5, "标签": 4, "摘要": 3, "正文": 1}
+    queries = [word.lower() for word in words if word]
+    questions = [query for query in queries if QUESTION_BREAK.search(query)]
+    parts = {term for query in questions for term in question_parts(query)}
     results = []
     for p, (fm, body, _) in pages.items():
         if type_ and fm.get("type") != type_:
@@ -295,37 +324,60 @@ def cmd_search(root, words, type_, tag, limit):
             continue
         fields = {"文件名": p.stem, "标题": fm.get("title", ""), "标签": " ".join(tags),
                   "摘要": clean_summary(fm), "正文": body}
-        score, matched, where = 0, 0, defaultdict(int)
-        for w in words:
-            wl, found = w.lower(), False
-            for f, val in fields.items():
-                c = val.lower().count(wl)
-                if c:
-                    found = True
-                    where[f] += c
-                    score += weights[f] * (min(c, 5) if f == "正文" else 1)
-            matched += found
-        if words and not matched:
-            continue
-        snippet = ""
-        for line in body.splitlines():
-            if any(w.lower() in line.lower() for w in words) and line.strip():
-                snippet = line.strip()
-                break
-        results.append((-matched, -score, p.stem.lower(), p, fm, dict(where), snippet))
+        fields = {label: value.lower() for label, value in fields.items()}
+        aliases = {alias.lower() for alias in as_list(fm.get("aliases")) if alias}
+        names = {fields["文件名"], fields["标题"]} - {""}
+        exact_words = exact_names = score = 0
+        where = defaultdict(int)
+        matched_terms = []
+        for term in queries:
+            counts = search_counts(term, fields, aliases)
+            if counts:
+                exact_words += 1
+                exact_names += term in names
+                matched_terms.append(term)
+                for field, count in counts.items():
+                    where[field] += count
+                    score += weights[field] * (min(count, 5) if field == "正文" else 1)
 
-    results.sort(key=lambda r: r[:3])
+        # 识别问句中完整出现的页名与中文别名，例如“首页质控要检查哪些内容”。
+        expanded = set(parts)
+        if questions:
+            for name in (names | aliases) - GENERIC_PARTS:
+                if len(name) >= 2 and re.search(r"[\u3400-\u9fff]", name):
+                    if any(name in query for query in questions):
+                        expanded.add(name)
+        part_score = 0
+        fragments = []
+        for term in sorted(expanded.difference(queries)):
+            counts = search_counts(term, fields, aliases)
+            if counts:
+                fragments.append(term)
+                for field, count in counts.items():
+                    where[field] += count
+                    part_score += weights[field]
+        if queries and not (exact_words or fragments):
+            continue
+        rank = (-exact_words, -exact_names, -score, -len(fragments), -part_score, p.stem.lower())
+        results.append((rank, p, fm, where, matched_terms, fragments, body))
+
+    results.sort(key=lambda row: row[0])
     if not results:
         print("没有找到匹配的页面。")
         return 0
-    for i, (_, _, _, p, fm, where, snippet) in enumerate(results[:limit], 1):
+    for i, (_, p, fm, where, matched_terms, fragments, body) in enumerate(results[:limit], 1):
         print(f"{i}. {p.relative_to(root)}  [{fm.get('type', '?')}]  {fm.get('title', p.stem)}")
         if clean_summary(fm):
             print(f"   {clean_summary(fm)}")
         if where:
             print("   命中：" + "、".join(f"{f}×{c}" if f == "正文" else f for f, c in where.items()))
-        if snippet and "正文" in where:
-            print("   …" + (snippet[:80] + ("…" if len(snippet) > 80 else "")))
+        if fragments:
+            print("   问句命中：" + "、".join(fragments))
+        if "正文" in where:
+            terms = matched_terms + fragments
+            snippet = next((line.strip() for line in body.splitlines()
+                            if any(term in line.lower() for term in terms)), "")
+            print("   …" + snippet[:80] + ("…" if len(snippet) > 80 else ""))
     shown = min(limit, len(results))
     print(f"\n共 {len(results)} 个匹配页面" + (f"，显示前 {shown} 个" if len(results) > shown else "") + "。")
     return 0
